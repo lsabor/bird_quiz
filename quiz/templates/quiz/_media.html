@@ -1,0 +1,6 @@
+{% if asset.media_type == "photo" %}
+<img class="quiz-photo" src="/media/{{ asset.file }}" alt="mystery bird">
+{% else %}
+<div class="audio" data-src="/media/{{ asset.file }}"><div class="wave"></div><div class="spec"></div>
+<p><button type="button" class="play">▶ Play</button> <span class="muted small">space = play/pause, click spectrogram to seek</span></p></div>
+{% endif %}

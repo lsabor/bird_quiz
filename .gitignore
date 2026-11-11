@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# bird_quiz data (never commit: media licensing + size)
+media/
+data/
+packs/
+.browser-profile/
+*.dump

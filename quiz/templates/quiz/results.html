@@ -1,0 +1,17 @@
+{% extends "quiz/base.html" %}
+{% block head %}<style>.thumb { width:120px; max-height:90px; object-fit:cover; border-radius:6px } .sci { font-style:italic }</style>{% endblock %}
+{% block content %}
+<div class="card"><h1>{{ correct }} / {{ answered }} correct</h1>
+<p class="muted">{{ session.trip_set.name }} · {{ total }} questions{% if answered < total %} · {{ answered }} answered{% endif %}</p>
+<p>{% if miss_codes %}<form method="post" action="{% url 'quiz:requiz' session.pk %}" style="display:inline">{% csrf_token %}
+<input type="hidden" name="species" value="{{ miss_codes }}"><button class="primary">Re-quiz missed species</button></form>{% endif %}
+<a class="btn" href="{% url 'quiz:setup' %}">New quiz</a></p></div>
+<div class="card"><table>
+<tr><th></th><th>Answer</th><th>You said</th></tr>
+{% for a in answers %}<tr>
+<td>{% if a.asset.media_type == "photo" %}<img class="thumb" src="/media/{{ a.asset.file }}" alt="">{% else %}<audio controls preload="none" src="/media/{{ a.asset.file }}" style="width:160px"></audio>{% endif %}</td>
+<td><a href="{% url 'quiz:question' session.pk a.index %}">{{ a.taxon.common_name }}</a><br><span class="sci small muted">{{ a.taxon.scientific_name }}</span></td>
+<td>{% if not a.chosen %}<span class="muted">—</span>{% elif a.is_correct %}✓{% else %}✗ {% if a.chosen == OTHER %}Other{% else %}{{ a.chosen_taxon.common_name }}{% endif %}{% if a.correct_choice == OTHER %} <span class="muted small">(answer: Other)</span>{% endif %}{% endif %}</td>
+</tr>{% endfor %}
+</table></div>
+{% endblock %}

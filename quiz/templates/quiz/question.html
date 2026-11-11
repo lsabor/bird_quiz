@@ -1,0 +1,52 @@
+{% extends "quiz/base.html" %}{% load static %}
+{% block head %}<style>
+.quiz-photo { display:block; max-width:100%; max-height:70vh; margin:0 auto; border-radius:8px }
+.options { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:8px; margin-top:12px }
+.options button { text-align:left; padding:10px 12px } .options .key { color:var(--muted); font-size:12px; margin-right:6px }
+.options button.correct { background:var(--ok-bg); border-color:var(--ok); color:var(--ok); font-weight:600 }
+.options button.wrong { background:var(--bad-bg); border-color:var(--bad); color:var(--bad) }
+.options button:disabled { cursor:default } .sci { font-style:italic }
+.feedback.ok { border-color:var(--ok) } .feedback.bad { border-color:var(--bad) }
+.topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+.spec { background:#fff; border-radius:6px; overflow:hidden }
+</style>{% endblock %}
+{% block content %}
+<div class="topbar"><span>Question {{ number }} / {{ total }}</span><span class="muted">{{ correct_so_far }}/{{ answered_so_far }} correct · <a href="{% url 'quiz:results' session.pk %}">end</a></span></div>
+<div class="card">
+  {% include "quiz/_media.html" with asset=ans.asset %}
+  <p class="muted small">{% if ans.asset.contributor %}© {{ ans.asset.contributor }}{% endif %}{% if ans.asset.license %} · {{ ans.asset.license }}{% endif %} · {{ ans.asset.get_source_display }}</p>
+</div>
+<form method="post" action="{% url 'quiz:answer' session.pk ans.index %}" id="answer-form">{% csrf_token %}
+<input type="hidden" name="response_ms" id="response_ms">
+<div class="options">
+{% for t in options %}
+  <button name="choice" value="{{ t.species_code }}" {% if ans.chosen %}disabled{% endif %}
+    class="{% if ans.chosen %}{% if t.species_code == ans.correct_choice %}correct{% elif t.species_code == ans.chosen %}wrong{% endif %}{% endif %}">
+    <span class="key">{{ forloop.counter }}</span>{{ t.common_name }}</button>
+{% endfor %}
+  <button name="choice" value="{{ OTHER }}" {% if ans.chosen %}disabled{% endif %}
+    class="{% if ans.chosen %}{% if ans.correct_choice == OTHER %}correct{% elif ans.chosen == OTHER %}wrong{% endif %}{% endif %}">
+    <span class="key">0</span>Other / not listed</button>
+</div>
+</form>
+{% if ans.chosen %}
+<div class="card feedback {% if ans.is_correct %}ok{% else %}bad{% endif %}" style="margin-top:16px">
+  <h2>{% if ans.is_correct %}✓ Correct{% else %}✗ Not quite{% endif %}</h2>
+  <p><strong>{{ ans.taxon.common_name }}</strong> <span class="sci">{{ ans.taxon.scientific_name }}</span> — {{ ans.taxon.family_common }}
+  {% if ans.correct_choice == OTHER %}<br><span class="muted">(it wasn't among the options — "Other" was right)</span>{% endif %}
+  {% if not ans.is_correct and chosen_taxon %}<br>You chose: {{ chosen_taxon.common_name }} <span class="sci">{{ chosen_taxon.scientific_name }}</span>{% endif %}</p>
+  {% if freq %}<p class="muted">At {{ session.trip_set.name }}: on {% widthratio freq.frequency 1 100 %}% of checklists ({{ freq.rarity }})</p>{% endif %}
+  <p class="small muted">{{ ans.asset.attribution }}{% if ans.asset.location %} · {{ ans.asset.location }}{% endif %}{% if ans.asset.obs_date %} · {{ ans.asset.obs_date }}{% endif %}
+  {% for k, v in ans.asset.tags.items %} · {{ k }}: {{ v }}{% endfor %}
+  {% if ans.asset.source_url %} · <a href="{{ ans.asset.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</p>
+  <p>{% if is_last %}<a id="next" class="btn primary" href="{% url 'quiz:results' session.pk %}">See results →</a>
+     {% else %}<a id="next" class="btn primary" href="{% url 'quiz:question' session.pk number %}">Next →</a>{% endif %}
+     <span class="muted small">Enter</span></p>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{% static 'quiz/vendor/wavesurfer.min.js' %}"></script>
+<script src="{% static 'quiz/vendor/spectrogram.min.js' %}"></script>
+<script src="{% static 'quiz/quiz.js' %}"></script>
+{% endblock %}

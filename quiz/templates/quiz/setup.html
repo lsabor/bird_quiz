@@ -1,0 +1,37 @@
+{% extends "quiz/base.html" %}
+{% block content %}
+{% if not trip_stats %}
+<div class="card"><h2>No trips yet</h2>
+<p>Create one from the command line — see <code>README.md</code> (create_trip → import_barchart → fetch_media).</p></div>
+{% else %}
+<form method="post" class="card">{% csrf_token %}
+<h1>New quiz</h1>
+<div class="grid">
+  <fieldset><legend>Trip</legend>
+    <select name="trip">{% for t, c in trip_stats %}
+      <option value="{{ t.slug }}" {% if t.slug == last.trip %}selected{% endif %}>{{ t.name }} — {{ t.n_species }} spp, {{ c.photos }} photos, {{ c.audio }} audio</option>{% endfor %}
+    </select></fieldset>
+  <fieldset><legend>Questions</legend><input type="number" name="n_questions" min="1" max="500" value="{{ last.n_questions }}"></fieldset>
+  <fieldset><legend>Media</legend>
+    <label><input type="checkbox" name="media_types" value="photo" {% if "photo" in last.media_types %}checked{% endif %}> Photos</label>
+    <label><input type="checkbox" name="media_types" value="audio" {% if "audio" in last.media_types %}checked{% endif %}> Audio</label></fieldset>
+  <fieldset><legend>Sources</legend>{% for v, label in sources %}
+    <label><input type="checkbox" name="sources" value="{{ v }}" {% if v in last.sources %}checked{% endif %}> {{ label }}</label>{% endfor %}</fieldset>
+  <fieldset><legend>Rarity at trip location</legend>{% for v, label in rarities %}
+    <label><input type="checkbox" name="rarities" value="{{ v }}" {% if v in last.rarities %}checked{% endif %}> {{ label|capfirst }}</label>{% endfor %}</fieldset>
+  <fieldset><legend>Answer options</legend><input type="number" name="n_options" min="2" max="12" value="{{ last.n_options }}"></fieldset>
+  <fieldset><legend>"Other" is correct (% of questions)</legend><input type="number" name="other_rate" min="0" max="90" value="{% widthratio last.other_rate 1 100 %}"></fieldset>
+  <fieldset><legend>Wrong answers drawn from</legend>
+    <label><input type="radio" name="distractors" value="family" {% if last.distractors == "family" %}checked{% endif %}> Similar birds (genus/family)</label>
+    <label><input type="radio" name="distractors" value="random" {% if last.distractors == "random" %}checked{% endif %}> Any trip species</label></fieldset>
+  <fieldset><legend>Species sampling</legend>
+    <label><input type="radio" name="weighting" value="uniform" {% if last.weighting == "uniform" %}checked{% endif %}> Equal</label>
+    <label><input type="radio" name="weighting" value="frequency" {% if last.weighting == "frequency" %}checked{% endif %}> Weighted by how common</label></fieldset>
+</div>
+<p><button class="primary" type="submit">Start quiz</button></p>
+</form>
+{% endif %}
+{% if recent %}<div class="card"><h2>Recent quizzes</h2><table>
+{% for s in recent %}{% with sc=s.score %}<tr><td><a href="{% url 'quiz:results' s.pk %}">{{ s.created|date:"Y-m-d H:i" }}</a></td><td>{{ s.trip_set.name }}</td><td>{{ sc.0 }}/{{ sc.1 }} {% if sc.1 < sc.2 %}<span class="muted">({{ sc.2 }} q, unfinished)</span>{% endif %}</td></tr>{% endwith %}{% endfor %}
+</table></div>{% endif %}
+{% endblock %}
