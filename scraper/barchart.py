@@ -8,7 +8,9 @@ Format (roughly):
 
     \tJan\t\t\t\tFeb ...
     Sample Size:\t12.0\t30.0\t...
-    Common Ostrich (<em class="sci">Struthio camelus</em>)\t0.0\t...
+    Snow Goose\t0.0\t...
+
+Labels are eBird common names (older/other exports may append the scientific name in <em> tags).
 """
 
 import datetime as dt
@@ -28,10 +30,10 @@ def week_window(d: dt.date, window: int) -> list[int]:
     return [(i + k) % 48 for k in range(-window, window + 1)]
 
 
-@dataclass
+@dataclass(frozen=True, eq=False)
 class BarchartRow:
     common_name: str
-    scientific_name: str
+    scientific_name: str | None
     values: list[float]  # 48 weekly frequencies
 
 
@@ -40,8 +42,8 @@ class Barchart:
     sample_sizes: list[float]
     rows: list[BarchartRow]
 
-    def window_stats(self, weeks: list[int]) -> tuple[int, dict[str, float]]:
-        """Sample-size-weighted frequency over the given weeks, keyed by scientific name."""
+    def window_stats(self, weeks: list[int]) -> tuple[int, dict[BarchartRow, float]]:
+        """Sample-size-weighted frequency of each row over the given weeks."""
         n = sum(self.sample_sizes[w] for w in weeks)
         out = {}
         for row in self.rows:
@@ -49,7 +51,7 @@ class Barchart:
                 f = sum(row.values[w] * self.sample_sizes[w] for w in weeks) / n
             else:
                 f = sum(row.values[w] for w in weeks) / len(weeks)
-            out[row.scientific_name] = f
+            out[row] = f
         return int(n), out
 
 
@@ -76,10 +78,11 @@ def parse_barchart(text: str) -> Barchart:
         if label.lower().startswith("sample size"):
             sample_sizes = nums
             continue
-        m = NAME_RE.match(label)
-        if not m:
-            continue
-        rows.append(BarchartRow(m["common"].strip(), m["sci"].strip(), nums))
+        m = NAME_RE.match(label) if "<em" in label else None
+        if m:
+            rows.append(BarchartRow(m["common"].strip(), m["sci"].strip(), nums))
+        elif label:
+            rows.append(BarchartRow(label, None, nums))
     if sample_sizes is None:
         raise ValueError("Could not find 'Sample Size' row - is this an eBird histogram TSV?")
     return Barchart(sample_sizes, rows)

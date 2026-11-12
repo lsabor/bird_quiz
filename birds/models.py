@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from django.conf import settings
 from django.db import models
 
@@ -67,16 +69,18 @@ def rarity_for(freq: float) -> str:
 
 
 class SpeciesFrequency(models.Model):
-    trip_set = models.ForeignKey(TripSet, on_delete=models.CASCADE, related_name="frequencies")
+    """How often a species is reported at one location (TripRegion) in the trip's date window."""
+
+    region = models.ForeignKey(TripRegion, on_delete=models.CASCADE, related_name="frequencies")
     taxon = models.ForeignKey(Taxon, on_delete=models.CASCADE, related_name="frequencies")
     frequency = models.FloatField(help_text="Fraction of checklists reporting (0-1)")
     sample_size = models.PositiveIntegerField(default=0, help_text="Checklists in window")
     rarity = models.CharField(max_length=10, choices=Rarity.choices)
-    source = models.CharField(max_length=32, default="barchart")  # barchart | api_checklists | spplist
-    detail = models.JSONField(default=dict, blank=True)  # raw per-region / per-week values
+    source = models.CharField(max_length=32, default="barchart")  # barchart | api_checklists
+    detail = models.JSONField(default=dict, blank=True)  # e.g. per-week values
 
     class Meta:
-        unique_together = [("trip_set", "taxon")]
+        unique_together = [("region", "taxon")]
         ordering = ["-frequency"]
 
     def save(self, *args, **kwargs):
@@ -84,7 +88,39 @@ class SpeciesFrequency(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.taxon.common_name} @ {self.trip_set.slug}: {self.frequency:.1%}"
+        return f"{self.taxon.common_name} @ {self.region.region_code}: {self.frequency:.1%}"
+
+
+@dataclass
+class CombinedFrequency:
+    """A species' frequency across several locations: the most common location wins."""
+
+    taxon: Taxon
+    frequency: float
+    best_region: str
+    per_region: dict[str, float]
+
+    @property
+    def rarity(self) -> str:
+        return rarity_for(self.frequency)
+
+
+def combined_frequencies(trip: TripSet, region_codes: list[str] | None = None) -> dict[int, CombinedFrequency]:
+    """taxon_id -> CombinedFrequency over the chosen regions (all of the trip's regions if None/empty)."""
+    qs = SpeciesFrequency.objects.filter(region__trip_set=trip).select_related("taxon", "region")
+    if region_codes:
+        qs = qs.filter(region__region_code__in=region_codes)
+    out: dict[int, CombinedFrequency] = {}
+    for sf in qs:
+        code = sf.region.region_code
+        cf = out.get(sf.taxon_id)
+        if cf is None:
+            out[sf.taxon_id] = CombinedFrequency(sf.taxon, sf.frequency, code, {code: sf.frequency})
+            continue
+        cf.per_region[code] = sf.frequency
+        if sf.frequency > cf.frequency:
+            cf.frequency, cf.best_region = sf.frequency, code
+    return out
 
 
 class MediaType(models.TextChoices):
@@ -113,6 +149,9 @@ class MediaAsset(models.Model):
     location = models.CharField(max_length=300, blank=True)
     obs_date = models.DateField(null=True, blank=True)
     tags = models.JSONField(default=dict, blank=True)  # age, sex, sound_type, ...
+    excluded = models.BooleanField(
+        default=False, db_default=False, help_text="Flagged as poor quality: never quiz on it"
+    )
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:

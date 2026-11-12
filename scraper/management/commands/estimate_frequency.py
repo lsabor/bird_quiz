@@ -13,7 +13,7 @@ from django.core.management.base import BaseCommand
 
 from birds.models import Taxon, TripSet
 from scraper.ebird_api import EbirdApi
-from scraper.frequency import store_frequencies
+from scraper.frequency import store_region_frequencies
 
 
 class Command(BaseCommand):
@@ -24,16 +24,19 @@ class Command(BaseCommand):
         parser.add_argument("--years", type=int, default=5)
         parser.add_argument("--max-checklists", type=int, default=300, help="Per region")
         parser.add_argument("--seed", type=int, default=0)
+        parser.add_argument("--region", action="append", help="Only these region codes (default: all in trip)")
 
-    def handle(self, trip, years, max_checklists, seed, **opts):
+    def handle(self, trip, years, max_checklists, seed, region, **opts):
         trip = TripSet.objects.get(slug=trip)
         api = EbirdApi()
         api.require_key()
         half = trip.week_window * 7 + 3
         today = dt.date.today()
         rng = random.Random(seed)
-        per_region = {}
-        for region in trip.regions.all():
+        regions = trip.regions.all()
+        if region:
+            regions = regions.filter(region_code__in=region)
+        for region in regions:
             subs = {}
             for y in range(today.year - years, today.year + 1):
                 center = trip.target_date.replace(year=y)
@@ -58,6 +61,8 @@ class Command(BaseCommand):
                 if n % 25 == 0:
                     self.stdout.write(f"  {n} complete checklists processed")
             taxa = {t.species_code: t for t in Taxon.objects.filter(species_code__in=counts)}
-            per_region[region.region_code] = (n, {taxa[c]: k / n for c, k in counts.items() if c in taxa and n})
-        count = store_frequencies(trip, per_region, "api_checklists")
-        self.stdout.write(self.style.SUCCESS(f"Stored {count} species frequencies for {trip.slug}"))
+            freqs = {taxa[c]: k / n for c, k in counts.items() if c in taxa and n}
+            count = store_region_frequencies(region, n, freqs, "api_checklists")
+            self.stdout.write(
+                self.style.SUCCESS(f"{region.region_code}: {n} complete checklists -> {count} species stored")
+            )

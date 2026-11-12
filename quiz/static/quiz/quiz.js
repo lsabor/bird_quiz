@@ -66,6 +66,9 @@
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea, select") || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === " " && ws) { e.preventDefault(); ws.playPause(); return; }
+    if (e.key.toLowerCase() === "x" && document.getElementById("flag-form")) {
+      e.preventDefault(); document.getElementById("flag-form").requestSubmit(); return;
+    }
     const next = document.getElementById("next");
     if (e.key === "Enter" && next) { e.preventDefault(); next.click(); return; }
     const buttons = form ? [...form.querySelectorAll("button[name=choice]")] : [];

@@ -50,9 +50,24 @@ This document is the source of truth for picking work back up. Update the
   - The plugin's default mel scale limits the canvas height to `fftSamples/8` px. We use `scale: "linear"`.
   - The plugin works in absolute dB, so quiet recordings render blank. The page decodes the clip,
     peak-normalizes it and loads it as a WAV blob. The colormap is grayscale on white, Macaulay-style.
-- **Marrakech trip built** (`marrakech-2026-11`): `estimate_frequency` sampled 400 of 692 checklists
-  (MA-11, ±10 days around 20 Nov in 2020–2025) and found 153 species (28 common, 51 uncommon, 74 rare).
-  A bar chart import (`import_barchart`) would give sturdier numbers.
+- **Real bar chart TSVs use plain eBird common names** as labels (no scientific names), and include
+  spuh/slash/hybrid rows. `import_barchart` matches on common name and drops non-species rows by
+  default.
+- **Marrakech trip** (`marrakech-2026-11`) has two locations:
+  - `MA-11`: bar chart import, 467 checklists in Nov wk 2–4, 216 species. The earlier API sample
+    found 153.
+  - `L13476308` (Oukaïmeden upper pine forest): bar chart imported with `--window 2`, giving
+    15 checklists and 45 species. It's sparse in November (only 9 checklists at ±1 week).
+- **Media quality signals:**
+  - **xeno-canto:** community A–E grades are meaningful. We fetch only A and B (stored rating 5/4).
+  - **iNaturalist:** the rating is the observation's favorites count, which is almost always 0–1, so
+    it's useless as a quality signal.
+  - **What the quiz offers:**
+    - an "Audio quality" setting: any / xeno-canto A–B / xeno-canto A only
+    - a per-media "👎 never show again" flag (`MediaAsset.excluded`, shortcut `x`), which travels
+      in packs
+  - **Possible later:** an automatic audio SNR score, which needs ffmpeg to decode m4a/mp3; and
+    storing photo resolution to filter out small originals.
 - **Headless Chromium** for UI screenshots needs system libraries:
   `sudo .venv/bin/playwright install-deps chromium`.
 
@@ -150,10 +165,13 @@ TripSet                       # "Marrakech Nov 2026"
 TripRegion                    # 1..n regions/hotspots per trip
   trip_set FK, region_code ("MA-07", "MA-07-xxx", or hotspot "L123456"), label
 
-SpeciesFrequency
-  trip_set FK, taxon FK, frequency (0–1, max/avg over regions+weeks),
-  per_region JSON (raw per-region/per-week values), sample_size (checklists)
+SpeciesFrequency               # one row per LOCATION (TripRegion) x species
+  region FK, taxon FK, frequency (0–1, sample-size-weighted over the window's weeks),
+  sample_size (checklists), source (barchart | api_checklists), detail JSON (per-week values)
   rarity (derived: common / uncommon / rare, thresholds in settings)
+  -> birds.models.combined_frequencies(trip, region_codes) merges the chosen locations: a species
+     takes the frequency/rarity of the location where it is most common. Media is per species, so
+     adding a location only downloads media for species that are new.
 
 MediaAsset
   ml_asset_id (unique), taxon FK, media_type (photo/audio),

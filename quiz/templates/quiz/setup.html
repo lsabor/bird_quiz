@@ -8,9 +8,14 @@
 <h1>New quiz</h1>
 <div class="grid">
   <fieldset><legend>Trip</legend>
-    <select name="trip">{% for t, c in trip_stats %}
-      <option value="{{ t.slug }}" {% if t.slug == last.trip %}selected{% endif %}>{{ t.name }} — {{ t.n_species }} spp, {{ c.photos }} photos, {{ c.audio }} audio</option>{% endfor %}
+    <select name="trip" id="trip-select">{% for t, c, regions in trip_stats %}
+      <option value="{{ t.slug }}" {% if t.slug == last.trip %}selected{% endif %}>{{ t.name }} — {{ c.species }} spp, {{ c.photos }} photos, {{ c.audio }} audio</option>{% endfor %}
     </select></fieldset>
+  <fieldset><legend>Locations (combined: each bird counts as its most common location)</legend>
+    {% for t, c, regions in trip_stats %}<div class="trip-regions" data-trip="{{ t.slug }}">
+      {% for r, n in regions %}<label><input type="checkbox" name="regions" value="{{ t.slug }}:{{ r.region_code }}"
+        {% if t.slug != last.trip or not last.regions or r.region_code in last.regions %}checked{% endif %}> {{ r }} <span class="muted small">({{ n }} spp)</span></label>{% endfor %}
+    </div>{% endfor %}</fieldset>
   <fieldset><legend>Questions</legend><input type="number" name="n_questions" min="1" max="500" value="{{ last.n_questions }}"></fieldset>
   <fieldset><legend>Media</legend>
     <label><input type="checkbox" name="media_types" value="photo" {% if "photo" in last.media_types %}checked{% endif %}> Photos</label>
@@ -24,6 +29,11 @@
   <fieldset><legend>Wrong answers drawn from</legend>
     <label><input type="radio" name="distractors" value="family" {% if last.distractors == "family" %}checked{% endif %}> Similar birds (genus/family)</label>
     <label><input type="radio" name="distractors" value="random" {% if last.distractors == "random" %}checked{% endif %}> Any trip species</label></fieldset>
+  <fieldset><legend>Audio quality</legend>
+    <label><input type="radio" name="audio_quality" value="any" {% if last.audio_quality == "any" or not last.audio_quality %}checked{% endif %}> Any</label>
+    <label><input type="radio" name="audio_quality" value="rated" {% if last.audio_quality == "rated" %}checked{% endif %}> xeno-canto rated A or B</label>
+    <label><input type="radio" name="audio_quality" value="best" {% if last.audio_quality == "best" %}checked{% endif %}> xeno-canto rated A only</label>
+    <span class="muted small">iNaturalist clips are unrated, so they're skipped unless "Any"</span></fieldset>
   <fieldset><legend>Species sampling</legend>
     <label><input type="radio" name="weighting" value="uniform" {% if last.weighting == "uniform" %}checked{% endif %}> Equal</label>
     <label><input type="radio" name="weighting" value="frequency" {% if last.weighting == "frequency" %}checked{% endif %}> Weighted by how common</label></fieldset>
@@ -35,3 +45,11 @@
 {% for s in recent %}{% with sc=s.score %}<tr><td><a href="{% url 'quiz:results' s.pk %}">{{ s.created|date:"Y-m-d H:i" }}</a></td><td>{{ s.trip_set.name }}</td><td>{{ sc.0 }}/{{ sc.1 }} {% if sc.1 < sc.2 %}<span class="muted">({{ sc.2 }} q, unfinished)</span>{% endif %}</td></tr>{% endwith %}{% endfor %}
 </table></div>{% endif %}
 {% endblock %}
+{% block scripts %}<script>
+(function () {
+  const sel = document.getElementById("trip-select");
+  if (!sel) return;
+  const sync = () => document.querySelectorAll(".trip-regions").forEach((d) => (d.hidden = d.dataset.trip !== sel.value));
+  sel.addEventListener("change", sync); sync();
+})();
+</script>{% endblock %}

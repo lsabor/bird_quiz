@@ -3,16 +3,20 @@
 import random
 from dataclasses import asdict, dataclass, field
 
-from birds.models import MediaAsset, MediaSource, SpeciesFrequency, TripSet
+from django.db.models import Q
+
+from birds.models import MediaAsset, MediaSource, TripSet, combined_frequencies
 
 from .models import OTHER, QuizAnswer, QuizSession
 
 MACAULAY = [MediaSource.FEATURED, MediaSource.COMMUNITY]
+AUDIO_MIN_RATING = {"rated": 4, "best": 5}
 
 
 @dataclass
 class QuizSettings:
     trip: str
+    regions: list[str] = field(default_factory=list)  # trip location codes to combine; empty = all
     n_questions: int = 20
     media_types: list[str] = field(default_factory=lambda: ["photo", "audio"])
     sources: list[str] = field(default_factory=lambda: ["featured", "community", "inaturalist", "xeno_canto"])
@@ -21,6 +25,7 @@ class QuizSettings:
     other_rate: float = 0.1  # chance the right answer is hidden and "Other" is correct
     distractors: str = "family"  # random | family
     weighting: str = "uniform"  # uniform | frequency
+    audio_quality: str = "any"  # any | rated (xeno-canto A/B only) | best (xeno-canto A only)
     species: list[str] = field(default_factory=list)  # optional explicit species subset (e.g. re-quiz misses)
     seed: int | None = None
 
@@ -47,21 +52,31 @@ def _distractor_pool(correct, pool, mode, rng):
 def build_quiz(s: QuizSettings) -> QuizSession:
     rng = random.Random(s.seed)
     trip = TripSet.objects.get(slug=s.trip)
-    freqs = SpeciesFrequency.objects.filter(trip_set=trip).select_related("taxon")
-    all_trip_taxa = [f.taxon for f in freqs]  # distractors may come from any trip species
-    target = freqs.filter(rarity__in=s.rarities)
+    # Combine the chosen locations; a species takes its frequency (and rarity) from where it's most common.
+    combined = combined_frequencies(trip, s.regions)
+    all_trip_taxa = [c.taxon for c in combined.values()]  # distractors may come from any of those species
+    target = [c for c in combined.values() if c.rarity in s.rarities]
     if s.species:
-        target = target.filter(taxon__species_code__in=s.species)
+        target = [c for c in target if c.taxon.species_code in s.species]
 
-    assets = MediaAsset.objects.filter(
-        taxon__in=[f.taxon for f in target],
-        media_type__in=s.media_types,
-        source__in=s.sources,
-    ).exclude(file="")
+    assets = (
+        MediaAsset.objects.filter(
+            taxon__in=[c.taxon for c in target],
+            media_type__in=s.media_types,
+            source__in=s.sources,
+        )
+        .exclude(file="")
+        .exclude(excluded=True)
+    )
+    if s.audio_quality in AUDIO_MIN_RATING:
+        # iNaturalist audio has no quality signal; xeno-canto ratings: A=5, B=4
+        assets = assets.exclude(
+            Q(media_type="audio") & ~Q(source="xeno_canto", rating__gte=AUDIO_MIN_RATING[s.audio_quality])
+        )
     by_taxon: dict[int, list[MediaAsset]] = {}
     for a in assets:
         by_taxon.setdefault(a.taxon_id, []).append(a)
-    candidates = [f for f in target if f.taxon_id in by_taxon]
+    candidates = [c for c in target if c.taxon.pk in by_taxon]
     if not candidates:
         raise ValueError("No species match those filters (or no media has been downloaded for them).")
 
@@ -83,7 +98,7 @@ def build_quiz(s: QuizSettings) -> QuizSession:
     session = QuizSession.objects.create(trip_set=trip, settings=asdict(s))
     answers = []
     for i, f in enumerate(picks):
-        lst = by_taxon[f.taxon_id]
+        lst = by_taxon[f.taxon.pk]
         asset = lst.pop(0)
         lst.append(asset)  # rotate
         hide = rng.random() < s.other_rate

@@ -3,7 +3,7 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from birds.models import MediaAsset, MediaType, TripSet
+from birds.models import MediaAsset, MediaType, TripSet, combined_frequencies
 from scraper import sources as media_sources
 from scraper.http import PoliteClient
 
@@ -46,14 +46,15 @@ class Command(BaseCommand):
         if inat_near:
             lat, lng, r = inat_near.split(",")
             geo = {"lat": lat, "lng": lng, "radius": r}
-        freqs = trip.frequencies.select_related("taxon").filter(frequency__gte=min_frequency)
+        # Species across all of the trip's locations; media is per species, so nothing is fetched twice.
+        combined = sorted(combined_frequencies(trip).values(), key=lambda c: -c.frequency)
+        taxa = [c.taxon for c in combined if c.frequency >= min_frequency]
         if species:
-            freqs = freqs.filter(taxon__species_code__in=species)
+            taxa = [t for t in taxa if t.species_code in species]
         http = PoliteClient()
         media_root = Path(settings.MEDIA_ROOT)
-        total = freqs.count()
-        for i, sf in enumerate(freqs, 1):
-            taxon = sf.taxon
+        total = len(taxa)
+        for i, taxon in enumerate(taxa, 1):
             cands = []
             try:
                 if "inaturalist" in srcs:

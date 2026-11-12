@@ -2,20 +2,22 @@ from django.contrib import messages
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
-from birds.models import MediaAsset, MediaSource, Rarity, Taxon, TripSet
+from birds.models import MediaAsset, MediaSource, Rarity, Taxon, TripSet, combined_frequencies
 
 from .engine import QuizSettings, build_quiz
 from .models import OTHER, QuizAnswer, QuizSession
 
 
 def setup(request):
-    trips = TripSet.objects.annotate(n_species=Count("frequencies")).order_by("-created")
+    trips = TripSet.objects.prefetch_related("regions").order_by("-created")
     if request.method == "POST":
         p = request.POST
         s = QuizSettings(
             trip=p["trip"],
+            regions=[r.split(":", 1)[1] for r in p.getlist("regions") if r.startswith(p["trip"] + ":")],
             n_questions=max(1, min(500, int(p.get("n_questions", 20)))),
             media_types=p.getlist("media_types") or ["photo"],
             sources=p.getlist("sources") or [c for c, _ in MediaSource.choices],
@@ -24,6 +26,7 @@ def setup(request):
             other_rate=max(0.0, min(0.9, float(p.get("other_rate", 10)) / 100)),
             distractors=p.get("distractors", "family"),
             weighting=p.get("weighting", "uniform"),
+            audio_quality=p.get("audio_quality", "any"),
             species=[c for c in p.get("species", "").split(",") if c],
         )
         request.session["last_settings"] = {k: v for k, v in s.__dict__.items() if k != "species"}
@@ -37,14 +40,17 @@ def setup(request):
     last = request.session.get("last_settings") or QuizSettings(trip="").__dict__
     trip_stats = []
     for t in trips:
+        taxon_ids = list(combined_frequencies(t))
         counts = (
-            MediaAsset.objects.filter(taxon__frequencies__trip_set=t)
+            MediaAsset.objects.filter(taxon_id__in=taxon_ids)
             .exclude(file="")
             .aggregate(
                 photos=Count("id", filter=Q(media_type="photo")), audio=Count("id", filter=Q(media_type="audio"))
             )
         )
-        trip_stats.append((t, counts))
+        counts["species"] = len(taxon_ids)
+        regions = [(r, r.frequencies.count()) for r in t.regions.all()]
+        trip_stats.append((t, counts, regions))
     return render(
         request,
         "quiz/setup.html",
@@ -67,7 +73,13 @@ def question(request, session_id, index):
     session = get_object_or_404(QuizSession, pk=session_id)
     ans = get_object_or_404(QuizAnswer.objects.select_related("asset", "taxon"), session=session, index=index)
     total = session.answers.count()
-    freq = ans.taxon.frequencies.filter(trip_set=session.trip_set).first()
+    freq = combined_frequencies(session.trip_set, session.settings.get("regions")).get(ans.taxon_id)
+    labels = {r.region_code: str(r) for r in session.trip_set.regions.all()}
+    freq_rows = (
+        [(labels.get(code, code), f) for code, f in sorted(freq.per_region.items(), key=lambda kv: -kv[1])]
+        if freq
+        else []
+    )
     correct, answered, _ = session.score
     return render(
         request,
@@ -76,6 +88,7 @@ def question(request, session_id, index):
             "session": session,
             "ans": ans,
             "options": _taxa(ans.options),
+            "freq_rows": freq_rows,
             "OTHER": OTHER,
             "total": total,
             "number": index + 1,
@@ -141,3 +154,15 @@ def requiz(request, session_id):
         messages.error(request, str(e))
         return redirect("quiz:results", session.pk)
     return redirect("quiz:question", new.pk, 0)
+
+
+@require_POST
+def flag_media(request, asset_id):
+    """Toggle 'never quiz on this' for a photo/clip; returns to the page it was flagged from."""
+    asset = get_object_or_404(MediaAsset, pk=asset_id)
+    asset.excluded = not asset.excluded
+    asset.save(update_fields=["excluded"])
+    nxt = request.POST.get("next", "")
+    if not url_has_allowed_host_and_scheme(nxt, allowed_hosts={request.get_host()}):
+        nxt = "quiz:setup"
+    return redirect(nxt)

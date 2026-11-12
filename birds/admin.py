@@ -23,8 +23,8 @@ class TripSetAdmin(admin.ModelAdmin):
 
 @admin.register(SpeciesFrequency)
 class SpeciesFrequencyAdmin(admin.ModelAdmin):
-    list_display = ["taxon", "trip_set", "frequency", "rarity", "sample_size", "source"]
-    list_filter = ["trip_set", "rarity", "source"]
+    list_display = ["taxon", "region", "frequency", "rarity", "sample_size", "source"]
+    list_filter = ["region__trip_set", "region", "rarity", "source"]
     search_fields = ["taxon__common_name"]
     raw_id_fields = ["taxon"]
 

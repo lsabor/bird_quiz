@@ -1,4 +1,4 @@
-{% extends "quiz/base.html" %}{% load static %}
+{% extends "quiz/base.html" %}{% load static quiz_extras %}
 {% block head %}<style>
 .quiz-photo { display:block; max-width:100%; max-height:70vh; margin:0 auto; border-radius:8px }
 .options { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:8px; margin-top:12px }
@@ -35,7 +35,7 @@
   <p><strong>{{ ans.taxon.common_name }}</strong> <span class="sci">{{ ans.taxon.scientific_name }}</span> — {{ ans.taxon.family_common }}
   {% if ans.correct_choice == OTHER %}<br><span class="muted">(it wasn't among the options — "Other" was right)</span>{% endif %}
   {% if not ans.is_correct and chosen_taxon %}<br>You chose: {{ chosen_taxon.common_name }} <span class="sci">{{ chosen_taxon.scientific_name }}</span>{% endif %}</p>
-  {% if freq %}<p class="muted">At {{ session.trip_set.name }}: on {% widthratio freq.frequency 1 100 %}% of checklists ({{ freq.rarity }})</p>{% endif %}
+  {% if freq_rows %}<p class="muted">{% for label, f in freq_rows %}{{ label }}: {{ f|pct }} of checklists{% if not forloop.last %} · {% endif %}{% endfor %} — {{ freq.rarity }}</p>{% endif %}
   <p class="small muted">{{ ans.asset.attribution }}{% if ans.asset.location %} · {{ ans.asset.location }}{% endif %}{% if ans.asset.obs_date %} · {{ ans.asset.obs_date }}{% endif %}
   {% for k, v in ans.asset.tags.items %} · {{ k }}: {{ v }}{% endfor %}
   {% if ans.asset.source_url %} · <a href="{{ ans.asset.source_url }}" target="_blank" rel="noopener">source</a>{% endif %}</p>
@@ -44,6 +44,12 @@
      <span class="muted small">Enter</span></p>
 </div>
 {% endif %}
+<form method="post" action="{% url 'quiz:flag_media' ans.asset.pk %}" id="flag-form" style="margin-top:8px">{% csrf_token %}
+  <input type="hidden" name="next" value="{{ request.path }}">
+  {% if ans.asset.excluded %}<span class="muted small">Flagged: this {{ ans.asset.media_type }} won't appear in future quizzes.</span>
+    <button type="submit" class="small">Undo</button>
+  {% else %}<button type="submit" class="small" title="Shortcut: x">👎 Poor quality: never show this {{ ans.asset.media_type }} again</button>{% endif %}
+</form>
 {% endblock %}
 {% block scripts %}
 <script src="{% static 'quiz/vendor/wavesurfer.min.js' %}"></script>

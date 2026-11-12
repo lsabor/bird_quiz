@@ -8,7 +8,7 @@ SAMPLE = (
     "\tJan\t\t\t\n"
     "Sample Size:\t" + "\t".join(["10.0"] * 48) + "\n"
     'Black-winged Stilt (<em class="sci">Himantopus himantopus</em>)\t' + "\t".join(["0.5"] * 48) + "\t\n"
-    "Common Bulbul (Pycnonotus barbatus)\t" + "\t".join(["0.0"] * 47 + ["1.0"]) + "\n"
+    "Common Bulbul\t" + "\t".join(["0.0"] * 47 + ["1.0"]) + "\n"
 )
 
 
@@ -24,6 +24,7 @@ def test_parse():
     assert len(bc.rows) == 2
     assert bc.rows[0].scientific_name == "Himantopus himantopus"
     assert bc.rows[0].common_name == "Black-winged Stilt"
+    assert bc.rows[1].common_name == "Common Bulbul" and bc.rows[1].scientific_name is None
     n, freqs = bc.window_stats([46, 47])
     assert n == 20
-    assert freqs["Pycnonotus barbatus"] == 0.5
+    assert freqs[bc.rows[1]] == 0.5

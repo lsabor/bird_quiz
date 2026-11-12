@@ -11,7 +11,7 @@ from django.db import transaction
 
 from birds.models import MediaAsset, SpeciesFrequency, Taxon, TripRegion, TripSet
 
-PACK_VERSION = 1
+PACK_VERSION = 2  # 2: frequencies are per region
 TAXON_FIELDS = [
     "species_code",
     "common_name",
@@ -36,6 +36,7 @@ ASSET_FIELDS = [
     "location",
     "obs_date",
     "tags",
+    "excluded",
 ]
 
 
@@ -44,8 +45,8 @@ def _ser(v):
 
 
 def export_pack(trip: TripSet, out: Path, sources: list[str] | None = None, include_files: bool = True) -> dict:
-    freqs = list(trip.frequencies.select_related("taxon"))
-    taxa = [f.taxon for f in freqs]
+    freqs = list(SpeciesFrequency.objects.filter(region__trip_set=trip).select_related("taxon", "region"))
+    taxa = list({f.taxon_id: f.taxon for f in freqs}.values())
     assets = MediaAsset.objects.filter(taxon__in=taxa).exclude(file="").select_related("taxon")
     if sources:
         assets = assets.filter(source__in=sources)
@@ -64,6 +65,7 @@ def export_pack(trip: TripSet, out: Path, sources: list[str] | None = None, incl
         "frequencies": [
             {
                 "species_code": f.taxon.species_code,
+                "region_code": f.region.region_code,
                 "frequency": f.frequency,
                 "sample_size": f.sample_size,
                 "source": f.source,
@@ -119,10 +121,13 @@ def import_pack(path: Path) -> dict:
     trip, _ = TripSet.objects.update_or_create(slug=tr.pop("slug"), defaults=tr)
     for r in regions:
         TripRegion.objects.update_or_create(trip_set=trip, region_code=r["region_code"], defaults={"label": r["label"]})
+    region_objs = {r.region_code: r for r in trip.regions.all()}
     for f in manifest["frequencies"]:
         code = f.pop("species_code")
-        sf = SpeciesFrequency.objects.filter(trip_set=trip, taxon=taxa[code]).first() or SpeciesFrequency(
-            trip_set=trip, taxon=taxa[code]
+        # v1 packs had one combined row per trip; attach those to the first region
+        region = region_objs.get(f.pop("region_code", None)) or region_objs[regions[0]["region_code"]]
+        sf = SpeciesFrequency.objects.filter(region=region, taxon=taxa[code]).first() or SpeciesFrequency(
+            region=region, taxon=taxa[code]
         )
         for k, v in f.items():
             setattr(sf, k, v)

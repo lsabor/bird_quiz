@@ -76,7 +76,7 @@ def inaturalist(http: PoliteClient, taxon: Taxon, media_type: str, limit: int, g
             )
             items = obs.get("photos") if media_type == MediaType.PHOTO else obs.get("sounds")
             for m in (items or [])[:1]:  # one per observation: more variety
-                if not m.get("license_code") or m.get("hidden"):
+                if not m.get("license_code") or m.get("hidden") or not (m.get("url") or m.get("file_url")):
                     continue
                 if media_type == MediaType.PHOTO:
                     url = m["url"].replace("/square.", "/large.")
@@ -108,44 +108,69 @@ def _xc_license(url: str) -> str:
     return f"cc-{m[1]}" if m else (url or "")
 
 
+def _group_name(english: str) -> str:
+    """'Western Cattle-Egret' -> 'egret', 'Common Reed Bunting' -> 'bunting'."""
+    words = (english or "").lower().replace("-", " ").split()
+    return words[-1] if words else ""
+
+
 def xeno_canto(http: PoliteClient, taxon: Taxon, limit: int, max_seconds: int = 60, box: str | None = None):
-    """box = 'lat_min,lon_min,lat_max,lon_max': prefer recordings there, then top up from anywhere."""
+    """box = 'lat_min,lon_min,lat_max,lon_max': prefer recordings there, then top up from anywhere.
+
+    xeno-canto follows IOC taxonomy, which lags eBird's recent genus changes (e.g. eBird's Nannus
+    troglodytes is xeno-canto's Troglodytes troglodytes). If the exact genus+species search finds
+    nothing, fall back to the species epithet (then subspecies epithet, for lumps like African
+    Chaffinch) and keep only birds with the same English group name (wren, bunting, ...).
+    """
     if not settings.XENO_CANTO_API_KEY:
         raise RuntimeError("XENO_CANTO_API_KEY is not set in .env (free: https://xeno-canto.org/account)")
     genus, _, epithet = taxon.scientific_name.partition(" ")
-    out, seen = [], set()
-    passes = [(box, q) for q in ("A", "B")] if box else []
-    passes += [(None, q) for q in ("A", "B")]
-    for area, quality in passes:
-        query = f"gen:{genus} sp:{epithet} q:{quality}" + (f" box:{area}" if area else "")
-        data = http.get_json(XC, {"query": query, "key": settings.XENO_CANTO_API_KEY, "per_page": 100})
-        for r in data.get("recordings", []):
-            if _xc_seconds(r.get("length")) > max_seconds or str(r["id"]) in seen:
-                continue
-            seen.add(str(r["id"]))
-            tags = {"sound_type": (r.get("type") or "").lower()}
-            for key, field in (("sex", "sex"), ("age", "stage")):
-                val = (r.get(field) or "").lower()
-                if val and val != "uncertain":
-                    tags[key] = val
-            file_url = r["file"] if r["file"].startswith("http") else "https:" + r["file"]
-            out.append(
-                dict(
-                    taxon=taxon,
-                    media_type=MediaType.AUDIO,
-                    source=MediaSource.XENO_CANTO,
-                    external_id=str(r["id"]),
-                    source_url=f"https://xeno-canto.org/{r['id']}",
-                    download_url=file_url,
-                    contributor=r.get("rec", ""),
-                    license=_xc_license(r.get("lic")),
-                    location=", ".join(x for x in (r.get("loc"), r.get("cnt")) if x),
-                    obs_date=_date(r.get("date")),
-                    rating={"A": 5, "B": 4}[quality],
-                    tags=tags,
-                    ext="mp3",
-                )
-            )
-            if len(out) >= limit:
-                return out
+    group = _group_name(taxon.common_name)
+
+    def search(base, accept):
+        out, seen = [], set()
+        passes = [(box, q) for q in ("A", "B")] if box else []
+        passes += [(None, q) for q in ("A", "B")]
+        for area, quality in passes:
+            query = f"{base} q:{quality}" + (f" box:{area}" if area else "")
+            data = http.get_json(XC, {"query": query, "key": settings.XENO_CANTO_API_KEY, "per_page": 100})
+            for r in data.get("recordings", []):
+                if str(r["id"]) in seen or _xc_seconds(r.get("length")) > max_seconds or not accept(r):
+                    continue
+                seen.add(str(r["id"]))
+                out.append(_xc_candidate(taxon, r, quality))
+                if len(out) >= limit:
+                    return out
+        return out
+
+    out = search(f"gen:{genus} sp:{epithet}", lambda r: True)
+    if not out:
+        same_group = lambda r: r.get("gen") == genus or _group_name(r.get("en")) == group  # noqa: E731
+        out = search(f"sp:{epithet} grp:birds", same_group) or search(f"ssp:{epithet} grp:birds", same_group)
     return out
+
+
+def _xc_candidate(taxon: Taxon, r: dict, quality: str) -> dict:
+    tags = {"sound_type": (r.get("type") or "").lower()}
+    for key, field in (("sex", "sex"), ("age", "stage")):
+        val = (r.get(field) or "").lower()
+        if val and val != "uncertain":
+            tags[key] = val
+    if r.get("gen") or r.get("sp"):
+        tags["xc_name"] = " ".join(x for x in (r.get("gen"), r.get("sp"), r.get("ssp")) if x)
+    file_url = r["file"] if r["file"].startswith("http") else "https:" + r["file"]
+    return dict(
+        taxon=taxon,
+        media_type=MediaType.AUDIO,
+        source=MediaSource.XENO_CANTO,
+        external_id=str(r["id"]),
+        source_url=f"https://xeno-canto.org/{r['id']}",
+        download_url=file_url,
+        contributor=r.get("rec", ""),
+        license=_xc_license(r.get("lic")),
+        location=", ".join(x for x in (r.get("loc"), r.get("cnt")) if x),
+        obs_date=_date(r.get("date")),
+        rating={"A": 5, "B": 4}[quality],
+        tags=tags,
+        ext="mp3",
+    )

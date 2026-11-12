@@ -1,6 +1,6 @@
 import pytest
 
-from birds.models import MediaAsset, SpeciesFrequency, Taxon, TripSet
+from birds.models import MediaAsset, SpeciesFrequency, Taxon, TripRegion, TripSet, combined_frequencies
 from quiz.engine import QuizSettings, build_quiz
 from quiz.models import OTHER
 
@@ -8,6 +8,7 @@ from quiz.models import OTHER
 @pytest.fixture
 def trip(db):
     trip = TripSet.objects.create(slug="t", name="T")
+    region = TripRegion.objects.create(trip_set=trip, region_code="R1")
     for i in range(8):
         tx = Taxon.objects.create(
             species_code=f"sp{i}",
@@ -18,7 +19,7 @@ def trip(db):
             family_code=f"fam{i % 2}",
             order="Ord",
         )
-        SpeciesFrequency(trip_set=trip, taxon=tx, frequency=[0.5, 0.05, 0.01][i % 3]).save()
+        SpeciesFrequency(region=region, taxon=tx, frequency=[0.5, 0.05, 0.01][i % 3]).save()
         if i < 6:
             MediaAsset.objects.create(
                 taxon=tx, media_type="photo", source="inaturalist", external_id=f"p{i}", file=f"sp{i}/a.jpg"
@@ -46,7 +47,7 @@ def test_filters_and_other(trip):
     )
     for a in s.answers.all():
         assert a.asset.media_type == "audio"
-        assert a.taxon.frequencies.get().rarity == "common"
+        assert combined_frequencies(trip)[a.taxon_id].rarity == "common"
         assert a.correct_choice == OTHER and a.taxon.species_code not in a.options
 
 
@@ -78,3 +79,51 @@ def test_flow(client, trip):
     r = client.post(f"/q/{s2.pk}/requiz/", {"species": a.taxon.species_code})
     s3 = QuizSession.objects.first()
     assert {x.taxon_id for x in s3.answers.all()} == {a.taxon_id}
+
+
+def test_combined_regions(trip):
+    """A bird rare at one location but common at another counts as common when both are selected."""
+    r2 = TripRegion.objects.create(trip_set=trip, region_code="R2")
+    rare_bird = Taxon.objects.get(species_code="sp2")  # 1% at R1
+    SpeciesFrequency(region=r2, taxon=rare_bird, frequency=0.4).save()
+    only_r2 = Taxon.objects.create(
+        species_code="mtn", common_name="Mountain", scientific_name="Mont ana", category="species", taxon_order=99
+    )
+    SpeciesFrequency(region=r2, taxon=only_r2, frequency=0.3).save()
+    MediaAsset.objects.create(taxon=only_r2, media_type="photo", source="inaturalist", external_id="m", file="m.jpg")
+
+    both = combined_frequencies(trip)
+    assert both[rare_bird.pk].rarity == "common" and both[rare_bird.pk].best_region == "R2"
+    assert combined_frequencies(trip, ["R1"])[rare_bird.pk].rarity == "rare"
+    assert only_r2.pk not in combined_frequencies(trip, ["R1"])
+
+    s = build_quiz(QuizSettings(trip="t", n_questions=30, rarities=["common"], seed=3))
+    asked = {a.taxon.species_code for a in s.answers.all()}
+    assert {"sp2", "mtn"} <= asked
+    s = build_quiz(QuizSettings(trip="t", regions=["R1"], n_questions=30, rarities=["common"], seed=3))
+    asked = {a.taxon.species_code for a in s.answers.all()}
+    assert "sp2" not in asked and "mtn" not in asked
+
+
+def test_audio_quality_and_flagging(client, trip):
+    tx = Taxon.objects.get(species_code="sp0")
+    inat_audio = MediaAsset.objects.create(
+        taxon=tx, media_type="audio", source="inaturalist", external_id="ia", file="sp0/ia.m4a"
+    )
+    MediaAsset.objects.filter(source="xeno_canto").update(rating=4)
+    MediaAsset.objects.filter(source="xeno_canto", taxon=tx).update(rating=5)
+
+    s = build_quiz(QuizSettings(trip="t", n_questions=20, media_types=["audio"], audio_quality="rated", seed=1))
+    assert all(a.asset.source == "xeno_canto" for a in s.answers.all())
+    s = build_quiz(QuizSettings(trip="t", n_questions=5, media_types=["audio"], audio_quality="best", seed=1))
+    assert {a.asset.taxon.species_code for a in s.answers.all()} == {"sp0"}
+    s = build_quiz(QuizSettings(trip="t", n_questions=40, media_types=["audio"], audio_quality="any", seed=1))
+    assert inat_audio.pk in {a.asset_id for a in s.answers.all()}
+
+    r = client.post(f"/media/{inat_audio.pk}/flag/", {"next": "/q/1/0/"})
+    assert r.status_code == 302 and r["Location"] == "/q/1/0/"
+    inat_audio.refresh_from_db()
+    assert inat_audio.excluded
+    s = build_quiz(QuizSettings(trip="t", n_questions=40, media_types=["audio"], seed=1))
+    assert inat_audio.pk not in {a.asset_id for a in s.answers.all()}
+    assert client.post(f"/media/{inat_audio.pk}/flag/", {"next": "https://evil.example"})["Location"] == "/"
